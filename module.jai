@@ -508,6 +508,95 @@ meshopt_computeMeshletBounds :: (meshlet_vertices: *u32, meshlet_triangles: *u8,
  */
 meshopt_setAllocator :: (allocate: #type (size: u64) -> *void #c_call, deallocate: #type (ptr: *void) #c_call) #foreign meshopt_lib;
 
+/**
+ * Quantize a float in [0..1] range into an N-bit fixed point unorm value
+ * Assumes reconstruction function (q / (2^N-1)), which is the case for fixed-function normalized fixed point conversion
+ * Maximum reconstruction error: 1/2^(N+1)
+ */
+meshopt_quantizeUnorm :: inline (v: float32, N: s32) -> u32
+{
+	scale := cast(float32)((1 << N) - 1);
+
+	v = ifx (v >= 0) v else 0;
+	v = ifx (v <= 1) v else 1;
+
+	return cast(u32)(v * scale + 0.5);
+}
+
+/**
+ * Quantize a float in [-1..1] range into an N-bit fixed point snorm value
+ * Assumes reconstruction function (q / (2^(N-1)-1)), which is the case for fixed-function normalized fixed point conversion (except early OpenGL versions)
+ * Maximum reconstruction error: 1/2^N
+ */
+meshopt_quantizeSnorm :: inline (v: float32, N: s32) -> s32
+{
+	scale := cast(float)((1 << (N - 1)) - 1);
+
+	round := ifx (v >= 0) 0.5 else -0.5;
+
+	v = ifx (v >= -1) v else -1;
+	v = ifx (v <= +1) v else +1;
+
+	return cast(s32)(v * scale + round);
+}
+
+/**
+ * Quantize a float into half-precision floating point value
+ * Generates +-inf for overflow, preserves NaN, flushes denormals to zero, rounds to nearest
+ * Representable magnitude range: [6e-5; 65504]
+ * Maximum relative reconstruction error: 5e-4
+ */
+meshopt_quantizeHalf :: inline (v: float32) -> u16
+{
+	u: union { f: float32; ui: u32; } = ---;
+	u.f = v;
+	ui := u.ui;
+
+	s := cast(s32)((ui >> 16) & 0x8000);
+	em := cast(s32)(ui & 0x7fffffff);
+
+	/* bias exponent and round to nearest; 112 is relative exponent bias (127-15) */
+	h := (em - (112 << 23) + (1 << 12)) >> 13;
+
+	/* underflow: flush to zero; 113 encodes exponent -14 */
+	h = ifx (em < (113 << 23)) 0 else h;
+
+	/* overflow: infinity; 143 encodes exponent 16 */
+	h = ifx (em >= (143 << 23)) 0x7c00 else h;
+
+	/* NaN; note that we convert all types of NaN to qNaN */
+	h = ifx (em > (255 << 23)) 0x7e00 else h;
+
+	return cast(u16)(s | h);
+}
+
+/**
+ * Quantize a float into a floating point value with a limited number of significant mantissa bits
+ * Generates +-inf for overflow, preserves NaN, flushes denormals to zero, rounds to nearest
+ * Assumes N is in a valid mantissa precision range, which is 1..23
+ */
+meshopt_quantizeFloat :: inline (v: float32, N: s32) -> float32
+{
+	u: union { f: float32; ui: u32; } = ---;
+	u.f = v;
+	ui := u.ui;
+
+	mask := cast(u32)((1 << (23 - N)) - 1);
+	round := cast(u32)((1 << (23 - N)) >> 1);
+
+	e := ui & 0x7f800000;
+	rui := (ui + round) & ~mask;
+
+	/* round all numbers except inf/nan; this is important to make sure nan doesn't overflow into -0 */
+	ui = ifx (e == 0x7f800000) ui else rui;
+
+	/* flush denormals to zero */
+	ui = ifx (e == 0) 0 else ui;
+
+	u.ui = ui;
+	return u.f;
+}
+
 #scope_file
 
 #if OS == .WINDOWS  meshopt_lib :: #foreign_library,no_dll "win/meshoptimizer";
