@@ -1,7 +1,7 @@
 /**
- * meshoptimizer - version 0.17
+ * meshoptimizer - version 0.18
  *
- * Copyright (C) 2016-2021, by Arseny Kapoulkine (arseny.kapoulkine@gmail.com)
+ * Copyright (C) 2016-2022, by Arseny Kapoulkine (arseny.kapoulkine@gmail.com)
  * Report bugs and download new versions at https://github.com/zeux/meshoptimizer
  *
  * This library is distributed under the MIT License. See notice at the end of this file.
@@ -11,7 +11,7 @@
 #module_parameters(MESHOPTIMIZER_EXPERIMENTAL := false);
 
 /* Version macro; major * 1000 + minor * 10 + patch */
-MESHOPTIMIZER_VERSION :: 170; /* 0.17 */
+MESHOPTIMIZER_VERSION :: 180; /* 0.18 */
 
 /**
  * Vertex attribute stream, similar to glVertexPointer
@@ -290,23 +290,27 @@ meshopt_decodeVertexBuffer :: (destination: *void, vertex_count: u64, vertex_siz
 	meshopt_encodeFilterOct :: (destination: *void, count: u64, stride: u64, bits: s32, data: *float32) #foreign meshopt_lib;
 	meshopt_encodeFilterQuat :: (destination: *void, count: u64, stride: u64, bits: s32, data: *float32) #foreign meshopt_lib;
 	meshopt_encodeFilterExp :: (destination: *void, count: u64, stride: u64, bits: s32, data: *float32) #foreign meshopt_lib;
+}
 
-	/**
-	 * Experimental: Mesh simplifier
-	 * Reduces the number of triangles in the mesh, attempting to preserve mesh appearance as much as possible
-	 * The algorithm tries to preserve mesh topology and can stop short of the target goal based on topology constraints or target error.
-	 * If not all attributes from the input mesh are required, it's recommended to reindex the mesh using meshopt_generateShadowIndexBuffer prior to simplification.
-	 * Returns the number of indices after simplification, with destination containing new index data
-	 * The resulting index buffer references vertices from the original vertex buffer.
-	 * If the original vertex data isn't required, creating a compact vertex buffer using meshopt_optimizeVertexFetch is recommended.
-	 *
-	 * destination must contain enough space for the target index buffer, worst case is index_count elements (*not* target_index_count)!
-	 * vertex_positions should have float3 position in the first 12 bytes of each vertex - similar to glVertexPointer
-	 * target_error represents the error relative to mesh extents that can be tolerated, e.g. 0.01 = 1% deformation
-	 * result_error can be NULL; when it's not NULL, it will contain the resulting (relative) error after simplification
-	 */
-	meshopt_simplify :: (destination: *u32, indices: *u32, index_count: u64, vertex_positions: *float32, vertex_count: u64, vertex_positions_stride: u64, target_index_count: u64, target_error: float32, result_error: *float32) -> u64 #foreign meshopt_lib;
+/**
+ * Mesh simplifier
+ * Reduces the number of triangles in the mesh, attempting to preserve mesh appearance as much as possible
+ * The algorithm tries to preserve mesh topology and can stop short of the target goal based on topology constraints or target error.
+ * If not all attributes from the input mesh are required, it's recommended to reindex the mesh using meshopt_generateShadowIndexBuffer prior to simplification.
+ * Returns the number of indices after simplification, with destination containing new index data
+ * The resulting index buffer references vertices from the original vertex buffer.
+ * If the original vertex data isn't required, creating a compact vertex buffer using meshopt_optimizeVertexFetch is recommended.
+ *
+ * destination must contain enough space for the target index buffer, worst case is index_count elements (*not* target_index_count)!
+ * vertex_positions should have float3 position in the first 12 bytes of each vertex - similar to glVertexPointer
+ * target_error represents the error relative to mesh extents that can be tolerated, e.g. 0.01 = 1% deformation
+ * options must be a bitmask composed of meshopt_SimplifyX options; 0 is a safe default
+ * result_error can be NULL; when it's not NULL, it will contain the resulting (relative) error after simplification
+ */
+meshopt_simplify :: (destination: *u32, indices: *u32, index_count: u64, vertex_positions: *float32, vertex_count: u64, vertex_positions_stride: u64, target_index_count: u64, target_error: float32, options: u32, result_error: *float32) -> u64 #foreign meshopt_lib;
 
+#if MESHOPTIMIZER_EXPERIMENTAL
+{
 	/**
 	 * Experimental: Mesh simplifier (sloppy)
 	 * Reduces the number of triangles in the mesh, sacrificing mesh appearance for simplification performance
@@ -333,15 +337,15 @@ meshopt_decodeVertexBuffer :: (destination: *void, vertex_count: u64, vertex_siz
 	 * vertex_positions should have float3 position in the first 12 bytes of each vertex - similar to glVertexPointer
 	 */
 	meshopt_simplifyPoints :: (destination: *u32, vertex_positions: *float32, vertex_count: u64, vertex_positions_stride: u64, target_vertex_count: u64) -> u64 #foreign meshopt_lib;
-
-	/**
-	 * Experimental: Returns the error scaling factor used by the simplifier to convert between absolute and relative extents
-	 *
-	 * Absolute error must be *divided* by the scaling factor before passing it to meshopt_simplify as target_error
-	 * Relative error returned by meshopt_simplify via result_error must be *multiplied* by the scaling factor to get absolute error.
-	 */
-	meshopt_simplifyScale :: (vertex_positions: *float32, vertex_count: u64, vertex_positions_stride: u64) -> float32 #foreign meshopt_lib;
 }
+
+/**
+ * Returns the error scaling factor used by the simplifier to convert between absolute and relative extents
+ *
+ * Absolute error must be *divided* by the scaling factor before passing it to meshopt_simplify as target_error
+ * Relative error returned by meshopt_simplify via result_error must be *multiplied* by the scaling factor to get absolute error.
+ */
+meshopt_simplifyScale :: (vertex_positions: *float32, vertex_count: u64, vertex_positions_stride: u64) -> float32 #foreign meshopt_lib;
 
 /**
  * Mesh stripifier
