@@ -603,6 +603,6 @@ meshopt_quantizeFloat :: inline (v: float32, N: s32) -> float32
 
 #scope_file
 
-#if OS == .WINDOWS  meshopt_lib :: #foreign_library,no_dll "win/meshoptimizer";
-#if OS == .MACOS    meshopt_lib :: #foreign_library,no_dll "macos/meshoptimizer";
-#if OS == .LINUX    meshopt_lib :: #foreign_library,no_dll "linux/meshoptimizer";
+#if OS == .WINDOWS  meshopt_lib :: #library,no_dll "win/meshoptimizer";
+#if OS == .MACOS    meshopt_lib :: #library,no_dll "macos/meshoptimizer";
+#if OS == .LINUX    meshopt_lib :: #library,no_dll "linux/meshoptimizer";
