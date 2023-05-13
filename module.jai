@@ -1,7 +1,7 @@
 /**
- * meshoptimizer - version 0.18
+ * meshoptimizer - version 0.19
  *
- * Copyright (C) 2016-2022, by Arseny Kapoulkine (arseny.kapoulkine@gmail.com)
+ * Copyright (C) 2016-2023, by Arseny Kapoulkine (arseny.kapoulkine@gmail.com)
  * Report bugs and download new versions at https://github.com/zeux/meshoptimizer
  *
  * This library is distributed under the MIT License. See notice at the end of this file.
@@ -11,11 +11,11 @@
 #module_parameters(MESHOPTIMIZER_EXPERIMENTAL := false);
 
 /* Version macro; major * 1000 + minor * 10 + patch */
-MESHOPTIMIZER_VERSION :: 180; /* 0.18 */
+MESHOPTIMIZER_VERSION :: 190; /* 0.19 */
 
 /**
- * Vertex attribute stream, similar to glVertexPointer
- * Each element takes size bytes, with stride controlling the spacing between successive elements.
+ * Vertex attribute stream
+ * Each element takes size bytes, beginning at data, with stride controlling the spacing between successive elements (stride >= size).
  */
 meshopt_Stream :: struct
 {
@@ -283,13 +283,22 @@ meshopt_decodeVertexBuffer :: (destination: *void, vertex_count: u64, vertex_siz
 	 * Input data must contain 4 floats for every quaternion (count*4 total).
 	 *
 	 * meshopt_encodeFilterExp encodes arbitrary (finite) floating-point data with 8-bit exponent and K-bit integer mantissa (1 <= K <= 24).
-	 * Mantissa is shared between all components of a given vector as defined by stride; stride must be divisible by 4.
+	 * Exponent can be shared between all components of a given vector as defined by stride or all values of a given component; stride must be divisible by 4.
 	 * Input data must contain stride/4 floats for every vector (count*stride/4 total).
-	 * When individual (scalar) encoding is desired, simply pass stride=4 and adjust count accordingly.
 	 */
+    meshopt_EncodeExpMode :: enum s32
+    {
+        /* When encoding exponents, use separate values for each component (maximum quality) */
+        meshopt_EncodeExpSeparate;
+        /* When encoding exponents, use shared value for all components of each vector (better compression) */
+        meshopt_EncodeExpSharedVector;
+        /* When encoding exponents, use shared value for each component of all vectors (best compression) */
+        meshopt_EncodeExpSharedComponent;
+    }
+
 	meshopt_encodeFilterOct :: (destination: *void, count: u64, stride: u64, bits: s32, data: *float32) #foreign meshopt_lib;
 	meshopt_encodeFilterQuat :: (destination: *void, count: u64, stride: u64, bits: s32, data: *float32) #foreign meshopt_lib;
-	meshopt_encodeFilterExp :: (destination: *void, count: u64, stride: u64, bits: s32, data: *float32) #foreign meshopt_lib;
+	meshopt_encodeFilterExp :: (destination: *void, count: u64, stride: u64, bits: s32, data: *float32, mode: meshopt_EncodeExpMode) #foreign meshopt_lib;
 }
 
 /**
@@ -302,7 +311,7 @@ meshopt_decodeVertexBuffer :: (destination: *void, vertex_count: u64, vertex_siz
  * If the original vertex data isn't required, creating a compact vertex buffer using meshopt_optimizeVertexFetch is recommended.
  *
  * destination must contain enough space for the target index buffer, worst case is index_count elements (*not* target_index_count)!
- * vertex_positions should have float3 position in the first 12 bytes of each vertex - similar to glVertexPointer
+ * vertex_positions should have float3 position in the first 12 bytes of each vertex
  * target_error represents the error relative to mesh extents that can be tolerated, e.g. 0.01 = 1% deformation
  * options must be a bitmask composed of meshopt_SimplifyX options; 0 is a safe default
  * result_error can be NULL; when it's not NULL, it will contain the resulting (relative) error after simplification
@@ -320,7 +329,7 @@ meshopt_simplify :: (destination: *u32, indices: *u32, index_count: u64, vertex_
 	 * If the original vertex data isn't required, creating a compact vertex buffer using meshopt_optimizeVertexFetch is recommended.
 	 *
 	 * destination must contain enough space for the target index buffer, worst case is index_count elements (*not* target_index_count)!
-	 * vertex_positions should have float3 position in the first 12 bytes of each vertex - similar to glVertexPointer
+	 * vertex_positions should have float3 position in the first 12 bytes of each vertex
 	 * target_error represents the error relative to mesh extents that can be tolerated, e.g. 0.01 = 1% deformation
 	 * result_error can be NULL; when it's not NULL, it will contain the resulting (relative) error after simplification
 	 */
@@ -334,7 +343,7 @@ meshopt_simplify :: (destination: *u32, indices: *u32, index_count: u64, vertex_
 	 * If the original vertex data isn't required, creating a compact vertex buffer using meshopt_optimizeVertexFetch is recommended.
 	 *
 	 * destination must contain enough space for the target index buffer (target_vertex_count elements)
-	 * vertex_positions should have float3 position in the first 12 bytes of each vertex - similar to glVertexPointer
+	 * vertex_positions should have float3 position in the first 12 bytes of each vertex
 	 */
 	meshopt_simplifyPoints :: (destination: *u32, vertex_positions: *float32, vertex_count: u64, vertex_positions_stride: u64, target_vertex_count: u64) -> u64 #foreign meshopt_lib;
 }
@@ -397,7 +406,7 @@ meshopt_OverdrawStatistics :: struct
  * Returns overdraw statistics using a software rasterizer
  * Results may not match actual GPU performance
  *
- * vertex_positions should have float3 position in the first 12 bytes of each vertex - similar to glVertexPointer
+ * vertex_positions should have float3 position in the first 12 bytes of each vertex 
  */
 meshopt_analyzeOverdraw :: (indices: *u32, index_count: u64, vertex_positions: *float32, vertex_count: u64, vertex_positions_stride: u64) -> meshopt_OverdrawStatistics #foreign meshopt_lib;
 
@@ -435,7 +444,7 @@ meshopt_Meshlet :: struct
  * meshlets must contain enough space for all meshlets, worst case size can be computed with meshopt_buildMeshletsBound
  * meshlet_vertices must contain enough space for all meshlets, worst case size is equal to max_meshlets * max_vertices
  * meshlet_triangles must contain enough space for all meshlets, worst case size is equal to max_meshlets * max_triangles * 3
- * vertex_positions should have float3 position in the first 12 bytes of each vertex - similar to glVertexPointer
+ * vertex_positions should have float3 position in the first 12 bytes of each vertex
  * max_vertices and max_triangles must not exceed implementation limits (max_vertices <= 255 - not 256!, max_triangles <= 512)
  * cone_weight should be set to 0 when cone culling is not used, and a value between 0 and 1 otherwise to balance between cluster size and cone culling efficiency
  */
@@ -475,9 +484,10 @@ meshopt_Bounds :: struct
  *   dot(center - camera_position, cone_axis) >= cone_cutoff * length(center - camera_position) + radius
  *
  * The formula that uses the apex is slightly more accurate but needs the apex; if you are already using bounding sphere
- * to do frustum/occlusion culling, the formula that doesn't use the apex may be preferable.
+ * to do frustum/occlusion culling, the formula that doesn't use the apex may be preferable (for derivation see
+ * Real-Time Rendering 4th Edition, section 19.3).
  *
- * vertex_positions should have float3 position in the first 12 bytes of each vertex - similar to glVertexPointer
+ * vertex_positions should have float3 position in the first 12 bytes of each vertex
  * index_count/3 should be less than or equal to 512 (the function assumes clusters of limited size)
  */
 meshopt_computeClusterBounds :: (indices: *u32, index_count: u64, vertex_positions: *float32, vertex_count: u64, vertex_positions_stride: u64) -> meshopt_Bounds #foreign meshopt_lib;
@@ -499,7 +509,7 @@ meshopt_computeMeshletBounds :: (meshlet_vertices: *u32, meshlet_triangles: *u8,
 	 * Reorders triangles for spatial locality, and generates a new index buffer. The resulting index buffer can be used with other functions like optimizeVertexCache.
 	 *
 	 * destination must contain enough space for the resulting index buffer (index_count elements)
-	 * vertex_positions should have float3 position in the first 12 bytes of each vertex - similar to glVertexPointer
+	 * vertex_positions should have float3 position in the first 12 bytes of each vertex
 	 */
 	meshopt_spatialSortTriangles :: (destination: *u32, indices: *u32, index_count: u64, vertex_positions: *float32, vertex_count: u64, vertex_positions_stride: u64) #foreign meshopt_lib;
 }
