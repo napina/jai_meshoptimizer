@@ -1,7 +1,7 @@
 /**
- * meshoptimizer - version 0.19
+ * meshoptimizer - version 0.22
  *
- * Copyright (C) 2016-2023, by Arseny Kapoulkine (arseny.kapoulkine@gmail.com)
+ * Copyright (C) 2016-2024, by Arseny Kapoulkine (arseny.kapoulkine@gmail.com)
  * Report bugs and download new versions at https://github.com/zeux/meshoptimizer
  *
  * This library is distributed under the MIT License. See notice at the end of this file.
@@ -11,7 +11,7 @@
 #module_parameters(MESHOPTIMIZER_EXPERIMENTAL := false);
 
 /* Version macro; major * 1000 + minor * 10 + patch */
-MESHOPTIMIZER_VERSION :: 190; /* 0.19 */
+MESHOPTIMIZER_VERSION :: 220; /* 0.22 */
 
 /**
  * Vertex attribute stream
@@ -108,9 +108,25 @@ meshopt_generateAdjacencyIndexBuffer :: (destination: *u32, indices: *u32, index
  * See "Tessellation on Any Budget" (John McDonald, GDC 2011) for implementation details.
  *
  * destination must contain enough space for the resulting index buffer (index_count*4 elements)
- * vertex_positions should have float3 position in the first 12 bytes of each vertex - similar to glVertexPointer
+ * vertex_positions should have float3 position in the first 12 bytes of each vertex
  */
 meshopt_generateTessellationIndexBuffer :: (destination: *u32, indices: *u32, index_count: u64, vertex_positions: *float32, vertex_count: u64, vertex_positions_stride: u64) #foreign meshopt_lib;
+
+#if MESHOPTIMIZER_EXPERIMENTAL
+{
+	/**
+	 * Experimental: Generate index buffer that can be used for visibility buffer rendering and returns the size of the reorder table
+	 * Each triangle's provoking vertex index is equal to primitive id; this allows passing it to the fragment shader using nointerpolate attribute.
+	 * This is important for performance on hardware where primitive id can't be accessed efficiently in fragment shader.
+	 * The reorder table stores the original vertex id for each vertex in the new index buffer, and should be used in the vertex shader to load vertex data.
+	 * The provoking vertex is assumed to be the first vertex in the triangle; if this is not the case (OpenGL), rotate each triangle (abc -> bca) before rendering.
+	 * For maximum efficiency the input index buffer should be optimized for vertex cache first.
+	 *
+	 * destination must contain enough space for the resulting index buffer (index_count elements)
+	 * reorder must contain enough space for the worst case reorder table (vertex_count + index_count/3 elements)
+	 */
+	meshopt_generateProvokingIndexBuffer :: (destination: *u32, reorder: *u32, indices: *u32, index_count: u64, vertex_count: u64) -> u64 #foreign meshopt_lib;
+}	
 
 /**
  * Vertex transform cache optimizer
@@ -251,68 +267,82 @@ meshopt_encodeVertexVersion :: (version: s32) #foreign meshopt_lib;
  */
 meshopt_decodeVertexBuffer :: (destination: *void, vertex_count: u64, vertex_size: u64, buffer: *u8, buffer_size: u64) -> s32 #foreign meshopt_lib;
 
-#if MESHOPTIMIZER_EXPERIMENTAL
+/**
+ * Vertex buffer filters
+ * These functions can be used to filter output of meshopt_decodeVertexBuffer in-place.
+ *
+ * meshopt_decodeFilterOct decodes octahedral encoding of a unit vector with K-bit (K <= 16) signed X/Y as an input; Z must store 1.0f.
+ * Each component is stored as an 8-bit or 16-bit normalized integer; stride must be equal to 4 or 8. W is preserved as is.
+ *
+ * meshopt_decodeFilterQuat decodes 3-component quaternion encoding with K-bit (4 <= K <= 16) component encoding and a 2-bit component index indicating which component to reconstruct.
+ * Each component is stored as an 16-bit integer; stride must be equal to 8.
+ *
+ * meshopt_decodeFilterExp decodes exponential encoding of floating-point data with 8-bit exponent and 24-bit integer mantissa as 2^E*M.
+ * Each 32-bit component is decoded in isolation; stride must be divisible by 4.
+ */
+meshopt_decodeFilterOct :: (buffer: *void, count: u64, stride: u64) #foreign meshopt_lib;
+meshopt_decodeFilterQuat :: (buffer: *void, count: u64, stride: u64) #foreign meshopt_lib;
+meshopt_decodeFilterExp :: (buffer: *void, count: u64, stride: u64) #foreign meshopt_lib;
+
+/**
+ * Vertex buffer filter encoders
+ * These functions can be used to encode data in a format that meshopt_decodeFilter can decode
+ *
+ * meshopt_encodeFilterOct encodes unit vectors with K-bit (K <= 16) signed X/Y as an output.
+ * Each component is stored as an 8-bit or 16-bit normalized integer; stride must be equal to 4 or 8. W is preserved as is.
+ * Input data must contain 4 floats for every vector (count*4 total).
+ *
+ * meshopt_encodeFilterQuat encodes unit quaternions with K-bit (4 <= K <= 16) component encoding.
+ * Each component is stored as an 16-bit integer; stride must be equal to 8.
+ * Input data must contain 4 floats for every quaternion (count*4 total).
+ *
+ * meshopt_encodeFilterExp encodes arbitrary (finite) floating-point data with 8-bit exponent and K-bit integer mantissa (1 <= K <= 24).
+ * Exponent can be shared between all components of a given vector as defined by stride or all values of a given component; stride must be divisible by 4.
+ * Input data must contain stride/4 floats for every vector (count*stride/4 total).
+ */
+meshopt_EncodeExpMode :: enum s32
 {
-	/**
-	 * Vertex buffer filters
-	 * These functions can be used to filter output of meshopt_decodeVertexBuffer in-place.
-	 *
-	 * meshopt_decodeFilterOct decodes octahedral encoding of a unit vector with K-bit (K <= 16) signed X/Y as an input; Z must store 1.0f.
-	 * Each component is stored as an 8-bit or 16-bit normalized integer; stride must be equal to 4 or 8. W is preserved as is.
-	 *
-	 * meshopt_decodeFilterQuat decodes 3-component quaternion encoding with K-bit (4 <= K <= 16) component encoding and a 2-bit component index indicating which component to reconstruct.
-	 * Each component is stored as an 16-bit integer; stride must be equal to 8.
-	 *
-	 * meshopt_decodeFilterExp decodes exponential encoding of floating-point data with 8-bit exponent and 24-bit integer mantissa as 2^E*M.
-	 * Each 32-bit component is decoded in isolation; stride must be divisible by 4.
-	 */
-	meshopt_decodeFilterOct :: (buffer: *void, count: u64, stride: u64) #foreign meshopt_lib;
-	meshopt_decodeFilterQuat :: (buffer: *void, count: u64, stride: u64) #foreign meshopt_lib;
-	meshopt_decodeFilterExp :: (buffer: *void, count: u64, stride: u64) #foreign meshopt_lib;
+    /* When encoding exponents, use separate values for each component (maximum quality) */
+	meshopt_EncodeExpSeparate;
+	/* When encoding exponents, use shared value for all components of each vector (better compression) */
+	meshopt_EncodeExpSharedVector;
+	/* When encoding exponents, use shared value for each component of all vectors (best compression) */
+	meshopt_EncodeExpSharedComponent;
+	/* Experimental: When encoding exponents, use separate values for each component, but clamp to 0 (good quality if very small values are not important) */
+	meshopt_EncodeExpClamped;
+}
 
-	/**
-	 * Vertex buffer filter encoders
-	 * These functions can be used to encode data in a format that meshopt_decodeFilter can decode
-	 *
-	 * meshopt_encodeFilterOct encodes unit vectors with K-bit (K <= 16) signed X/Y as an output.
-	 * Each component is stored as an 8-bit or 16-bit normalized integer; stride must be equal to 4 or 8. W is preserved as is.
-	 * Input data must contain 4 floats for every vector (count*4 total).
-	 *
-	 * meshopt_encodeFilterQuat encodes unit quaternions with K-bit (4 <= K <= 16) component encoding.
-	 * Each component is stored as an 16-bit integer; stride must be equal to 8.
-	 * Input data must contain 4 floats for every quaternion (count*4 total).
-	 *
-	 * meshopt_encodeFilterExp encodes arbitrary (finite) floating-point data with 8-bit exponent and K-bit integer mantissa (1 <= K <= 24).
-	 * Exponent can be shared between all components of a given vector as defined by stride or all values of a given component; stride must be divisible by 4.
-	 * Input data must contain stride/4 floats for every vector (count*stride/4 total).
-	 */
-    meshopt_EncodeExpMode :: enum s32
-    {
-        /* When encoding exponents, use separate values for each component (maximum quality) */
-        meshopt_EncodeExpSeparate;
-        /* When encoding exponents, use shared value for all components of each vector (better compression) */
-        meshopt_EncodeExpSharedVector;
-        /* When encoding exponents, use shared value for each component of all vectors (best compression) */
-        meshopt_EncodeExpSharedComponent;
-    }
+meshopt_encodeFilterOct :: (destination: *void, count: u64, stride: u64, bits: s32, data: *float32) #foreign meshopt_lib;
+meshopt_encodeFilterQuat :: (destination: *void, count: u64, stride: u64, bits: s32, data: *float32) #foreign meshopt_lib;
+meshopt_encodeFilterExp :: (destination: *void, count: u64, stride: u64, bits: s32, data: *float32, mode: meshopt_EncodeExpMode) #foreign meshopt_lib;
 
-	meshopt_encodeFilterOct :: (destination: *void, count: u64, stride: u64, bits: s32, data: *float32) #foreign meshopt_lib;
-	meshopt_encodeFilterQuat :: (destination: *void, count: u64, stride: u64, bits: s32, data: *float32) #foreign meshopt_lib;
-	meshopt_encodeFilterExp :: (destination: *void, count: u64, stride: u64, bits: s32, data: *float32, mode: meshopt_EncodeExpMode) #foreign meshopt_lib;
+/**
+ * Simplification options
+ */
+meshopt_SimplifyOptions :: enum_flags u32
+{
+	/* Do not move vertices that are located on the topological border (vertices on triangle edges that don't have a paired triangle). Useful for simplifying portions of the larger mesh. */
+	meshopt_SimplifyLockBorder :: 1 << 0;
+	/* Improve simplification performance assuming input indices are a sparse subset of the mesh. Note that error becomes relative to subset extents. */
+	meshopt_SimplifySparse :: 1 << 1;
+	/* Treat error limit and resulting error as absolute instead of relative to mesh extents. */
+	meshopt_SimplifyErrorAbsolute :: 1 << 2;
+	/* Experimental: remove disconnected parts of the mesh during simplification incrementally, regardless of the topological restrictions inside components. */
+	meshopt_SimplifyPrune :: 1 << 3;
 }
 
 /**
  * Mesh simplifier
  * Reduces the number of triangles in the mesh, attempting to preserve mesh appearance as much as possible
  * The algorithm tries to preserve mesh topology and can stop short of the target goal based on topology constraints or target error.
- * If not all attributes from the input mesh are required, it's recommended to reindex the mesh using meshopt_generateShadowIndexBuffer prior to simplification.
+ * If not all attributes from the input mesh are required, it's recommended to reindex the mesh without them prior to simplification.
  * Returns the number of indices after simplification, with destination containing new index data
  * The resulting index buffer references vertices from the original vertex buffer.
  * If the original vertex data isn't required, creating a compact vertex buffer using meshopt_optimizeVertexFetch is recommended.
  *
  * destination must contain enough space for the target index buffer, worst case is index_count elements (*not* target_index_count)!
  * vertex_positions should have float3 position in the first 12 bytes of each vertex
- * target_error represents the error relative to mesh extents that can be tolerated, e.g. 0.01 = 1% deformation
+ * target_error represents the error relative to mesh extents that can be tolerated, e.g. 0.01 = 1% deformation; value range [0..1]
  * options must be a bitmask composed of meshopt_SimplifyX options; 0 is a safe default
  * result_error can be NULL; when it's not NULL, it will contain the resulting (relative) error after simplification
  */
@@ -320,6 +350,18 @@ meshopt_simplify :: (destination: *u32, indices: *u32, index_count: u64, vertex_
 
 #if MESHOPTIMIZER_EXPERIMENTAL
 {
+	/**
+	 * Experimental: Mesh simplifier with attribute metric
+	 * The algorithm enhances meshopt_simplify by incorporating attribute values into the error metric used to prioritize simplification order; see meshopt_simplify documentation for details.
+	 * Note that the number of attributes affects memory requirements and running time; this algorithm requires ~1.5x more memory and time compared to meshopt_simplify when using 4 scalar attributes.
+	 *
+	 * vertex_attributes should have attribute_count floats for each vertex
+	 * attribute_weights should have attribute_count floats in total; the weights determine relative priority of attributes between each other and wrt position
+	 * attribute_count must be <= 32
+	 * vertex_lock can be NULL; when it's not NULL, it should have a value for each vertex; 1 denotes vertices that can't be moved
+	 */
+	meshopt_simplifyWithAttributes :: (destination: *u32, indices: *u32, index_count: u64, vertex_positions: *float32, vertex_count: u64, vertex_positions_stride: u64, vertex_attributes: *float32, vertex_attributes_stride: u64, attribute_weights: *float32, attribute_count: u64, vertex_lock: *u8, target_index_count: u64, target_error: float32, options: u32, result_error: *float32) -> u64 #foreign meshopt_lib;
+
 	/**
 	 * Experimental: Mesh simplifier (sloppy)
 	 * Reduces the number of triangles in the mesh, sacrificing mesh appearance for simplification performance
@@ -330,7 +372,7 @@ meshopt_simplify :: (destination: *u32, indices: *u32, index_count: u64, vertex_
 	 *
 	 * destination must contain enough space for the target index buffer, worst case is index_count elements (*not* target_index_count)!
 	 * vertex_positions should have float3 position in the first 12 bytes of each vertex
-	 * target_error represents the error relative to mesh extents that can be tolerated, e.g. 0.01 = 1% deformation
+	 * target_error represents the error relative to mesh extents that can be tolerated, e.g. 0.01 = 1% deformation; value range [0..1]
 	 * result_error can be NULL; when it's not NULL, it will contain the resulting (relative) error after simplification
 	 */
 	meshopt_simplifySloppy :: (destination: *u32, indices: *u32, index_count: u64, vertex_positions: *float32, vertex_count: u64, vertex_positions_stride: u64, target_index_count: u64, target_error: float32, result_error: *float32) -> u64 #foreign meshopt_lib;
@@ -344,6 +386,8 @@ meshopt_simplify :: (destination: *u32, indices: *u32, index_count: u64, vertex_
 	 *
 	 * destination must contain enough space for the target index buffer (target_vertex_count elements)
 	 * vertex_positions should have float3 position in the first 12 bytes of each vertex
+	 * vertex_colors should can be NULL; when it's not NULL, it should have float3 color in the first 12 bytes of each vertex
+	 * color_weight determines relative priority of color wrt position; 1.0 is a safe default
 	 */
 	meshopt_simplifyPoints :: (destination: *u32, vertex_positions: *float32, vertex_count: u64, vertex_positions_stride: u64, target_vertex_count: u64) -> u64 #foreign meshopt_lib;
 }
@@ -452,6 +496,19 @@ meshopt_buildMeshlets :: (meshlets: *meshopt_Meshlet, meshlet_vertices: *u32, me
 meshopt_buildMeshletsScan :: (meshlets: *meshopt_Meshlet, meshlet_vertices: *u32, meshlet_triangles: *u8, indices: *u32, index_count: u64, vertex_count: u64, max_vertices: u64, max_triangles: u64) -> u64 #foreign meshopt_lib;
 meshopt_buildMeshletsBound :: (index_count: u64, max_vertices: u64, max_triangles: u64) -> u64 #foreign meshopt_lib;
 
+#if MESHOPTIMIZER_EXPERIMENTAL
+{
+	/**
+	 * Experimental: Meshlet optimizer
+	 * Reorders meshlet vertices and triangles to maximize locality to improve rasterizer throughput
+	 *
+	 * meshlet_triangles and meshlet_vertices must refer to meshlet triangle and vertex index data; when buildMeshlets* is used, these
+	 * need to be computed from meshlet's vertex_offset and triangle_offset
+	 * triangle_count and vertex_count must not exceed implementation limits (vertex_count <= 255 - not 256!, triangle_count <= 512)
+	 */
+	meshopt_optimizeMeshlet :: (meshlet_vertices: *u32, meshlet_triangles: *u8, triangle_count: u64, vertex_count: u64) #foreign meshopt_lib;
+}
+
 meshopt_Bounds :: struct
 {
 	/* bounding sphere, useful for frustum and occlusion culling */
@@ -493,17 +550,18 @@ meshopt_Bounds :: struct
 meshopt_computeClusterBounds :: (indices: *u32, index_count: u64, vertex_positions: *float32, vertex_count: u64, vertex_positions_stride: u64) -> meshopt_Bounds #foreign meshopt_lib;
 meshopt_computeMeshletBounds :: (meshlet_vertices: *u32, meshlet_triangles: *u8, triangle_count: u64, vertex_positions: *float32, vertex_count: u64, vertex_positions_stride: u64) -> meshopt_Bounds #foreign meshopt_lib;
 
+/**
+ * Spatial sorter
+ * Generates a remap table that can be used to reorder points for spatial locality.
+ * Resulting remap table maps old vertices to new vertices and can be used in meshopt_remapVertexBuffer.
+ *
+ * destination must contain enough space for the resulting remap table (vertex_count elements)
+ * vertex_positions should have float3 position in the first 12 bytes of each vertex
+ */
+meshopt_spatialSortRemap :: (destination: *u32, vertex_positions: *float32, vertex_count: u64, vertex_positions_stride: u64) #foreign meshopt_lib;
+
 #if MESHOPTIMIZER_EXPERIMENTAL
 {
-	/**
-	 * Experimental: Spatial sorter
-	 * Generates a remap table that can be used to reorder points for spatial locality.
-	 * Resulting remap table maps old vertices to new vertices and can be used in meshopt_remapVertexBuffer.
-	 *
-	 * destination must contain enough space for the resulting remap table (vertex_count elements)
-	 */
-	meshopt_spatialSortRemap :: (destination: *u32, vertex_positions: *float32, vertex_count: u64, vertex_positions_stride: u64) #foreign meshopt_lib;
-
 	/**
 	 * Experimental: Spatial sorter
 	 * Reorders triangles for spatial locality, and generates a new index buffer. The resulting index buffer can be used with other functions like optimizeVertexCache.
