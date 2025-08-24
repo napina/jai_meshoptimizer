@@ -336,6 +336,46 @@ void simplifyAttr(const Mesh& mesh, float threshold = 0.2f, unsigned int options
 	    (end - start) * 1000);
 }
 
+void simplifyUpdate(const Mesh& mesh, float threshold = 0.2f, unsigned int options = 0)
+{
+	Mesh lod;
+
+	double start = timestamp();
+
+	size_t target_index_count = size_t(mesh.indices.size() * threshold);
+	float target_error = 1e-2f;
+	float result_error = 0;
+
+	const float nrm_weight = 0.5f;
+	const float attr_weights[3] = {nrm_weight, nrm_weight, nrm_weight};
+
+	lod = mesh; // start from the original mesh
+	lod.indices.resize(meshopt_simplifyWithUpdate(&lod.indices[0], mesh.indices.size(), &lod.vertices[0].px, mesh.vertices.size(), sizeof(Vertex), &lod.vertices[0].nx, sizeof(Vertex), attr_weights, 3, NULL, target_index_count, target_error, options, &result_error));
+
+	lod.vertices.resize(meshopt_optimizeVertexFetch(&lod.vertices[0], &lod.indices[0], lod.indices.size(), &mesh.vertices[0], mesh.vertices.size(), sizeof(Vertex)));
+
+	for (size_t i = 0; i < lod.vertices.size(); ++i)
+	{
+		// update normals
+		Vertex& v = lod.vertices[i];
+		float nl = sqrtf(v.nx * v.nx + v.ny * v.ny + v.nz * v.nz);
+		if (nl > 0)
+		{
+			v.nx /= nl;
+			v.ny /= nl;
+			v.nz /= nl;
+		}
+	}
+
+	double end = timestamp();
+
+	printf("%-9s: %d triangles => %d triangles (%.2f%% deviation) in %.2f msec\n",
+	    "SimplifyUpdt",
+	    int(mesh.indices.size() / 3), int(lod.indices.size() / 3),
+	    result_error * 100,
+	    (end - start) * 1000);
+}
+
 void simplifySloppy(const Mesh& mesh, float threshold = 0.2f)
 {
 	Mesh lod;
@@ -505,6 +545,10 @@ void simplifyClusters(const Mesh& mesh, float threshold = 0.2f)
 
 	double middle = timestamp();
 
+	// generate position remap; we'll use that to partition clusters using position-only adjacency
+	std::vector<unsigned int> remap(mesh.vertices.size());
+	meshopt_generatePositionRemap(&remap[0], &mesh.vertices[0].px, mesh.vertices.size(), sizeof(Vertex));
+
 	// partition clusters in groups; each group will be simplified separately and the boundaries between groups will be preserved
 	std::vector<unsigned int> cluster_indices;
 	cluster_indices.reserve(mesh.indices.size()); // slight underestimate, vector should realloc once
@@ -515,13 +559,15 @@ void simplifyClusters(const Mesh& mesh, float threshold = 0.2f)
 		const meshopt_Meshlet& m = meshlets[i];
 
 		for (size_t j = 0; j < m.triangle_count * 3; ++j)
-			cluster_indices.push_back(meshlet_vertices[m.vertex_offset + meshlet_triangles[m.triangle_offset + j]]);
+		{
+			unsigned int v = meshlet_vertices[m.vertex_offset + meshlet_triangles[m.triangle_offset + j]];
+
+			// use the first vertex with equivalent position so that cluster adjacency ignores attribute seams
+			cluster_indices.push_back(remap[v]);
+		}
 
 		cluster_sizes[i] = m.triangle_count * 3;
 	}
-
-	// makes sure clusters are partitioned using position-only adjacency
-	meshopt_generateShadowIndexBuffer(&cluster_indices[0], &cluster_indices[0], cluster_indices.size(), &mesh.vertices[0].px, mesh.vertices.size(), sizeof(float) * 3, sizeof(Vertex));
 
 	std::vector<unsigned int> partition(meshlets.size());
 	size_t partition_count = meshopt_partitionClusters(&partition[0], &cluster_indices[0], cluster_indices.size(), &cluster_sizes[0], cluster_sizes.size(), &mesh.vertices[0].px, mesh.vertices.size(), sizeof(Vertex), target_group_size);
@@ -1383,6 +1429,8 @@ void process(const char* path)
 	simplify(mesh);
 	simplify(mesh, 0.1f, meshopt_SimplifyPrune);
 	simplifyAttr(mesh);
+	simplifyAttr(mesh, 0.1f, meshopt_SimplifyPermissive);
+	simplifyUpdate(mesh);
 	simplifySloppy(mesh);
 	simplifyComplete(mesh);
 	simplifyPoints(mesh);
@@ -1405,7 +1453,7 @@ void processDev(const char* path)
 	if (!loadMesh(mesh, path))
 		return;
 
-	simplifyClusters(mesh);
+	simplifyUpdate(mesh, 0.1f, meshopt_SimplifyPrune | meshopt_SimplifyPermissive);
 }
 
 void processNanite(const char* path)
